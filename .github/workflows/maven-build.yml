@@ -1,0 +1,42 @@
+name: Java CI with Maven
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # Эти переменные подставляются из Settings -> Secrets вашего репозитория
+    env:
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      JWT_ACCESS_SECRET: ${{ secrets.JWT_ACCESS_SECRET }}
+      JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET }}
+      SSL_KEYSTORE_PASSWORD: ${{ secrets.SSL_KEYSTORE_PASSWORD }}
+
+    steps:
+      # 1. Скачиваем код из репозитория
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Устанавливаем JDK
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven' # Исправлено: добавлен пробел и кавычки
+
+      # 3. Сборка проекта через Maven
+      - name: Build with Maven
+        run: mvn -B package -DskipTests --file pom.xml
+
+      # 4. (Опционально) Загрузка артефакта (JAR файла)
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: autoservice-app
+          path: target/*.jar
