@@ -3,12 +3,17 @@ package com.example.autoservice.service;
 import com.example.autoservice.model.*;
 import com.example.autoservice.repository.*;
 import com.example.autoservice.dto.*;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
-import java.util.Base64;
+import java.util.HexFormat;
 
 @Service
 public class LicenseService {
@@ -18,6 +23,9 @@ public class LicenseService {
     private final ProductRepository productRepo;
     private final LicenseTypeRepository typeRepo;
     private final LicenseHistoryRepository historyRepo;
+
+    @Value("${license.signature.secret}")
+    private String signatureSecret;
 
     public LicenseService(LicenseRepository lr, DeviceRepository dr, DeviceLicenseRepository dlr,
                           ProductRepository pr, LicenseTypeRepository tr, LicenseHistoryRepository hr) {
@@ -51,7 +59,6 @@ public class LicenseService {
         license.setCode(UUID.randomUUID().toString().substring(0, 8).toUpperCase());
         license.setProduct(product);
         license.setType(type);
-        // Устанавливаем лимит, например, 2 или берем из запроса, если нужно
         license.setDevice_count(2);
         license.setEnding_date(Instant.now().plus(type.getDefault_duration_in_days(), ChronoUnit.DAYS));
 
@@ -65,7 +72,6 @@ public class LicenseService {
         License license = licenseRepo.findByCode(code)
                 .orElseThrow(() -> new RuntimeException("404: License not found"));
 
-        // 1. Проверки владельца и блокировок
         if (license.getUser() != null && !license.getUser().getId().equals(user.getId())) {
             throw new RuntimeException("403: License owned by another user");
         }
@@ -74,19 +80,14 @@ public class LicenseService {
             throw new RuntimeException("403: License or product is blocked");
         }
 
-        // 2. Ищем устройство, но НЕ сохраняем его сразу, если его нет
         Device device = deviceRepo.findByMacAddress(mac).orElse(null);
 
-        // 3. Если устройство новое или не привязано к этой лицензии
         if (device == null || !devLicRepo.existsByLicenseAndDevice(license, device)) {
-
-            // ПРОВЕРКА ЛИМИТА (важно: делаем до сохранения устройства)
             long currentDevices = devLicRepo.countByLicense(license);
             if (currentDevices >= license.getDevice_count()) {
-                throw new RuntimeException("409: Device limit reached (" + license.getDevice_count() + ")");
+                throw new RuntimeException("409: Device limit reached");
             }
 
-            // Если устройства не было в базе вообще — создаем
             if (device == null) {
                 device = new Device();
                 device.setMacAddress(mac);
@@ -95,40 +96,18 @@ public class LicenseService {
                 device = deviceRepo.save(device);
             }
 
-            // Создаем связь
             DeviceLicense link = new DeviceLicense();
             link.setLicense(license);
             link.setDevice(device);
             link.setActivation_date(Instant.now());
             devLicRepo.save(link);
 
-            // Обновляем данные лицензии при первой активации
             if (license.getFirst_activation_date() == null) {
                 license.setFirst_activation_date(Instant.now());
                 license.setUser(user);
                 licenseRepo.save(license);
             }
             recordHistory(license, user, "ACTIVATED", "Activated on device: " + mac);
-        }
-
-        return buildResponse(license, device);
-    }
-
-    @Transactional(readOnly = true)
-    public TicketResponse verifyLicense(String deviceMac, String licenseCode) {
-        License license = licenseRepo.findByCode(licenseCode)
-                .orElseThrow(() -> new RuntimeException("404: License not found"));
-
-        Device device = deviceRepo.findByMacAddress(deviceMac)
-                .orElseThrow(() -> new RuntimeException("404: Device not found"));
-
-        if (!devLicRepo.existsByLicenseAndDevice(license, device)) {
-            throw new RuntimeException("403: License not activated on this device");
-        }
-
-        if (license.getProduct().is_blocked() || license.isBlocked() ||
-                (license.getEnding_date() != null && license.getEnding_date().isBefore(Instant.now()))) {
-            throw new RuntimeException("403: License invalid, expired or blocked");
         }
 
         return buildResponse(license, device);
@@ -162,6 +141,20 @@ public class LicenseService {
         return buildResponse(license, null);
     }
 
+    public TicketResponse verifyLicense(String deviceMac, String licenseCode) {
+        License license = licenseRepo.findByCode(licenseCode)
+                .orElseThrow(() -> new RuntimeException("404: License not found"));
+
+        Device device = deviceRepo.findByMacAddress(deviceMac)
+                .orElseThrow(() -> new RuntimeException("404: Device not found"));
+
+        if (!devLicRepo.existsByLicenseAndDevice(license, device)) {
+            throw new RuntimeException("403: License not activated on this device");
+        }
+
+        return buildResponse(license, device);
+    }
+
     private TicketResponse buildResponse(License l, Device d) {
         Ticket t = new Ticket();
         t.serverDate = Instant.now();
@@ -175,20 +168,45 @@ public class LicenseService {
         TicketResponse resp = new TicketResponse();
         resp.ticket = t;
 
+        // Формируем данные для подписи
         String mac = (d != null) ? d.getMacAddress() : "null";
-        resp.signature = Base64.getEncoder().encodeToString(
-                (l.getCode() + ":" + mac + ":" + t.expirationDate).getBytes()
-        );
+        String dataToSign = l.getCode() + ":" + mac + ":" + t.expirationDate;
+
+        // Вычисляем HMAC-SHA256 подпись
+        resp.signature = calculateHmacSha256(dataToSign);
 
         return resp;
     }
 
-    @Transactional
+    private String calculateHmacSha256(String data) {
+        try {
+            // Используем секрет из application.properties
+            byte[] keyBytes = signatureSecret.getBytes(StandardCharsets.UTF_8);
+            SecretKeySpec secretKey = new SecretKeySpec(keyBytes, "HmacSHA256");
+
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(secretKey);
+
+            byte[] rawHmac = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+
+            // Ручной перевод байтов в HEX-строку (вместо HexFormat)
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : rawHmac) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString();
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to calculate signature", e);
+        }
+    }
+
     public TicketResponse activateLicense(ActivateLicenseRequest request, User user) {
         return activate(request.licenseCode, request.deviceMac, request.deviceName, user);
     }
 
-    @Transactional
     public TicketResponse extendLicense(ExtendLicenseRequest request, User user) {
         return renew(request.licenseCode, user);
     }
