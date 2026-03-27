@@ -32,9 +32,6 @@ public class License {
     private boolean blocked = false;
     private Integer device_count = 0;
 
-    @ManyToOne
-    @JoinColumn(name = "owner_id")
-    private User owner;
 
     @OneToMany(mappedBy = "license", cascade = CascadeType.ALL)
     private List<DeviceLicense> deviceLicenses;
@@ -68,8 +65,6 @@ public class License {
     public Integer getDevice_count() { return device_count; }
     public void setDevice_count(Integer device_count) { this.device_count = device_count; }
 
-    public User getOwner() { return owner; }
-    public void setOwner(User owner) { this.owner = owner; }
 
     public List<DeviceLicense> getDeviceLicenses() { return deviceLicenses; }
     public void setDeviceLicenses(List<DeviceLicense> deviceLicenses) { this.deviceLicenses = deviceLicenses; }
