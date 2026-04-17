@@ -4,6 +4,7 @@ import com.example.autoservice.model.User;
 import com.example.autoservice.service.TokenService;
 import com.example.autoservice.service.UserService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
@@ -26,7 +27,6 @@ public class AuthRestController {
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody RegistrationRequest request) {
         try {
-            // Если роль не указана, ставим обычного пользователя
             String role = (request.getRole() == null || request.getRole().isEmpty())
                     ? "ROLE_USER" : request.getRole();
 
@@ -48,17 +48,46 @@ public class AuthRestController {
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest request) {
         try {
-            // Используем UserService для поиска (через UserDetailsService)
             User user = (User) userService.loadUserByUsername(request.getUsername());
 
             if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
                 return ResponseEntity.status(401).body(Map.of("error", "Invalid password"));
             }
 
-            String token = tokenService.generateAccessToken(user);
-            return ResponseEntity.ok(Map.of("accessToken", token));
+            return ResponseEntity.ok(tokenService.issueTokens(user));
         } catch (Exception e) {
             return ResponseEntity.status(401).body(Map.of("error", "User not found"));
+        }
+    }
+
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refresh(@RequestBody RefreshRequest request) {
+        try {
+            if (request.getRefreshToken() == null || request.getRefreshToken().isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Refresh token is required"));
+            }
+
+            return ResponseEntity.ok(tokenService.refreshTokens(request.getRefreshToken()));
+        } catch (BadCredentialsException e) {
+            return ResponseEntity.status(401).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(401).body(Map.of("error", "Refresh token is invalid"));
+        }
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(@RequestBody RefreshRequest request) {
+        try {
+            if (request.getRefreshToken() == null || request.getRefreshToken().isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Refresh token is required"));
+            }
+
+            tokenService.revokeSessionByRefreshToken(request.getRefreshToken(), "Logout requested by user");
+            return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
+        } catch (BadCredentialsException e) {
+            return ResponseEntity.status(401).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(401).body(Map.of("error", "Logout failed"));
         }
     }
 }
