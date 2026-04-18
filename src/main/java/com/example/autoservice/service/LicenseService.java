@@ -1,8 +1,23 @@
 package com.example.autoservice.service;
 
-import com.example.autoservice.model.*;
-import com.example.autoservice.repository.*;
-import com.example.autoservice.dto.*;
+import com.example.autoservice.dto.ActivateLicenseRequest;
+import com.example.autoservice.dto.CreateLicenseRequest;
+import com.example.autoservice.dto.ExtendLicenseRequest;
+import com.example.autoservice.dto.Ticket;
+import com.example.autoservice.dto.TicketResponse;
+import com.example.autoservice.model.Device;
+import com.example.autoservice.model.DeviceLicense;
+import com.example.autoservice.model.License;
+import com.example.autoservice.model.LicenseHistory;
+import com.example.autoservice.model.LicenseType;
+import com.example.autoservice.model.Product;
+import com.example.autoservice.model.User;
+import com.example.autoservice.repository.DeviceLicenseRepository;
+import com.example.autoservice.repository.DeviceRepository;
+import com.example.autoservice.repository.LicenseHistoryRepository;
+import com.example.autoservice.repository.LicenseRepository;
+import com.example.autoservice.repository.LicenseTypeRepository;
+import com.example.autoservice.repository.ProductRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,8 +35,12 @@ public class LicenseService {
     private final LicenseHistoryRepository historyRepo;
     private final SigningService signingService;
 
-    public LicenseService(LicenseRepository lr, DeviceRepository dr, DeviceLicenseRepository dlr,
-                          ProductRepository pr, LicenseTypeRepository tr, LicenseHistoryRepository hr,
+    public LicenseService(LicenseRepository lr,
+                          DeviceRepository dr,
+                          DeviceLicenseRepository dlr,
+                          ProductRepository pr,
+                          LicenseTypeRepository tr,
+                          LicenseHistoryRepository hr,
                           SigningService signingService) {
         this.licenseRepo = lr;
         this.deviceRepo = dr;
@@ -62,10 +81,12 @@ public class LicenseService {
 
     @Transactional
     public TicketResponse activateLicense(ActivateLicenseRequest request, User user) {
-        License license = licenseRepo.findByCode(request.licenseCode)
+        License license = licenseRepo.findLockedByCode(request.licenseCode)
                 .orElseThrow(() -> new RuntimeException("License not found"));
 
-        if (license.isBlocked()) throw new RuntimeException("License is blocked");
+        if (license.isBlocked()) {
+            throw new RuntimeException("License is blocked");
+        }
 
         if (license.getUser() == null) {
             license.setUser(user);
@@ -99,7 +120,9 @@ public class LicenseService {
 
         if (license.getFirst_activation_date() == null) {
             license.setFirst_activation_date(Instant.now());
-            license.setEnding_date(Instant.now().plus(license.getType().getDefault_duration_in_days(), ChronoUnit.DAYS));
+            license.setEnding_date(
+                    Instant.now().plus(license.getType().getDefault_duration_in_days(), ChronoUnit.DAYS)
+            );
         }
 
         licenseRepo.save(license);
@@ -108,36 +131,51 @@ public class LicenseService {
         return buildResponse(license, device.getId());
     }
 
+    @Transactional(readOnly = true)
     public TicketResponse verifyLicense(String mac, String code) {
-        License license = licenseRepo.findByCode(code).orElseThrow();
-        Device device = deviceRepo.findByMacAddress(mac).orElseThrow();
-        if (!devLicRepo.existsByLicenseAndDevice(license, device)) throw new RuntimeException("Not activated");
-        if (license.isBlocked()) throw new RuntimeException("License blocked");
-        if (license.getEnding_date().isBefore(Instant.now())) throw new RuntimeException("Expired");
+        License license = licenseRepo.findByCode(code)
+                .orElseThrow(() -> new RuntimeException("License not found"));
+
+        Device device = deviceRepo.findByMacAddress(mac)
+                .orElseThrow(() -> new RuntimeException("Device not found"));
+
+        if (!devLicRepo.existsByLicenseAndDevice(license, device)) {
+            throw new RuntimeException("Not activated");
+        }
+
+        if (license.isBlocked()) {
+            throw new RuntimeException("License blocked");
+        }
+
+        if (license.getEnding_date().isBefore(Instant.now())) {
+            throw new RuntimeException("Expired");
+        }
+
         return buildResponse(license, device.getId());
     }
 
     @Transactional
     public TicketResponse extendLicense(ExtendLicenseRequest request, User user) {
-        License license = licenseRepo.findByCode(request.licenseCode)
+        License license = licenseRepo.findLockedByCode(request.licenseCode)
                 .orElseThrow(() -> new RuntimeException("License not found"));
 
         if (license.getUser() != null && !license.getUser().getId().equals(user.getId())) {
             throw new RuntimeException("Access denied");
         }
 
-
         Instant now = Instant.now();
         long daysRemaining = ChronoUnit.DAYS.between(now, license.getEnding_date());
-
 
         if (license.getEnding_date().isAfter(now) && daysRemaining > 7) {
             throw new RuntimeException("Extension allowed only when 7 or fewer days remain");
         }
 
-        license.setEnding_date(license.getEnding_date().plus(license.getType().getDefault_duration_in_days(), ChronoUnit.DAYS));
+        license.setEnding_date(
+                license.getEnding_date().plus(license.getType().getDefault_duration_in_days(), ChronoUnit.DAYS)
+        );
         licenseRepo.save(license);
         recordHistory(license, user, "RENEWED", "License extended");
+
         return buildResponse(license, null);
     }
 
