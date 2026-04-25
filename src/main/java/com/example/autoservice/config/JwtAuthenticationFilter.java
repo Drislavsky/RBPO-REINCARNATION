@@ -31,14 +31,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String path = request.getServletPath();
 
-        if (path.startsWith("/api/auth/")) {
+        if (path.startsWith("/api/auth/")) { //допуск авторизации для всех
             filterChain.doFilter(request, response);
             return;
         }
 
         String authHeader = request.getHeader("Authorization");
 
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) { //пропустить для авторизации
             filterChain.doFilter(request, response);
             return;
         }
@@ -48,7 +48,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             Claims claims = tokenService.validateAccessToken(token);
 
-            if (!tokenService.isAccessTokenActive(claims)) {
+            if (!tokenService.isAccessTokenActive(claims)) { //активен ли токен
                 filterChain.doFilter(request, response);
                 return;
             }
@@ -57,7 +57,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String role = claims.get("role", String.class);
 
             if (username != null && role != null) {
-                String authority = role.startsWith("ROLE_") ? role : "ROLE_" + role;
+                String authority = role.startsWith("ROLE_") ? role : "ROLE_" + role; //добавить роль если есть имя
 
                 UserDetails userDetails = org.springframework.security.core.userdetails.User
                         .withUsername(username)

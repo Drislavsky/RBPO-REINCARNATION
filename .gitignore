@@ -37,3 +37,4 @@ build/
 *.csr
 *.pem
 *.crt
+*.cer
