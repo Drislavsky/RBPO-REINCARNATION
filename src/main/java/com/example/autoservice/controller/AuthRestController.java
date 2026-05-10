@@ -14,6 +14,8 @@ import java.util.Map;
 @RequestMapping("/api/auth")
 public class AuthRestController {
 
+    private static final String DEFAULT_REGISTRATION_ROLE = "ROLE_USER";
+
     private final UserService userService;
     private final TokenService tokenService;
     private final PasswordEncoder passwordEncoder;
@@ -27,18 +29,16 @@ public class AuthRestController {
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody RegistrationRequest request) {
         try {
-            String role = (request.getRole() == null || request.getRole().isEmpty())
-                    ? "ROLE_USER" : request.getRole();
-
             User user = userService.registerUser(
                     request.getUsername(),
                     request.getPassword(),
-                    role
+                    DEFAULT_REGISTRATION_ROLE
             );
 
             return ResponseEntity.ok(Map.of(
                     "message", "User registered successfully",
-                    "username", user.getUsername()
+                    "username", user.getUsername(),
+                    "role", user.getRole()
             ));
         } catch (Exception e) {
             return ResponseEntity.status(400).body(Map.of("error", e.getMessage()));

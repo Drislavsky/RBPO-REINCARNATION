@@ -3,16 +3,23 @@ package com.example.autoservice.controller;
 public class RegistrationRequest {
     private String username;
     private String password;
-    private String role;
 
-    public RegistrationRequest() {}
+    public RegistrationRequest() {
+    }
 
-    public String getUsername() { return username; }
-    public void setUsername(String username) { this.username = username; }
+    public String getUsername() {
+        return username;
+    }
 
-    public String getPassword() { return password; }
-    public void setPassword(String password) { this.password = password; }
+    public void setUsername(String username) {
+        this.username = username;
+    }
 
-    public String getRole() { return role; }
-    public void setRole(String role) { this.role = role; }
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
 }
